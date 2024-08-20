@@ -7,7 +7,7 @@
     <groupId>com.palmergames.bukkit</groupId>
     <artifactId>TownyChat</artifactId>
     <packaging>jar</packaging>
-    <version>0.116</version>
+    <version>0.117</version>
 
     <licenses>
         <license>
@@ -83,9 +83,9 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
-            <groupId>org.spigotmc</groupId>
-            <artifactId>spigot-api</artifactId>
-            <version>1.20.2-R0.1-SNAPSHOT</version>
+            <groupId>dev.folia</groupId>
+            <artifactId>folia-api</artifactId>
+            <version>1.20.1-R0.1-SNAPSHOT</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
@@ -135,6 +135,7 @@
             <version>1.0.0</version>
             <scope>provided</scope>
         </dependency>
+
     </dependencies>
 
     <build>
@@ -146,8 +147,8 @@
                 <version>3.11.0</version>
                 <configuration>
                     <release>8</release>
-                    <source>${java.version}</source>
-                    <target>${java.version}</target>
+                    <source>14</source>
+                    <target>14</target>
                     <compilerArgs>
                         <arg>-Xplugin:jabel</arg>
                     </compilerArgs>

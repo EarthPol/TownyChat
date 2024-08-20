@@ -15,6 +15,11 @@ import com.palmergames.bukkit.towny.TownyUniverse;
 import com.palmergames.bukkit.util.Colors;
 
 import me.clip.placeholderapi.PlaceholderAPI;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.TextComponent;
+import net.kyori.adventure.text.event.ClickEvent;
+import net.kyori.adventure.text.event.HoverEvent;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Sound;
@@ -41,99 +46,253 @@ public class StandardChannel extends Channel {
 
 	@Override
 	public void chatProcess(AsyncPlayerChatEvent event) {
-		
 		channelTypes channelType = this.getType();
 		Player player = event.getPlayer();
 		boolean notifyjoin = false;
 
 		Resident resident = TownyUniverse.getInstance().getResident(player.getUniqueId());
-		if (resident == null)
+		if (resident == null) {
 			return;
+		}
+
 		Town town = TownyAPI.getInstance().getResidentTownOrNull(resident);
 		Nation nation = TownyAPI.getInstance().getResidentNationOrNull(resident);
 
 		// If the channel would require a town/nation which is null, cancel and fail early.
-		if (town == null && channelType.equals(channelTypes.TOWN) ||
-			nation == null && (channelType.equals(channelTypes.NATION) || channelType.equals(channelTypes.ALLIANCE))) {
+		if ((town == null && channelType.equals(channelTypes.TOWN)) ||
+				(nation == null && (channelType.equals(channelTypes.NATION) || channelType.equals(channelTypes.ALLIANCE)))) {
 			event.setCancelled(true);
 			return;
 		}
 
-		// If player sends a message to a channel they have left
-		// tell the channel to add the player back
+		// If player sends a message to a channel they have left, rejoin them to the channel.
 		if (isAbsent(player.getName())) {
 			join(player);
 			notifyjoin = true;
 			Bukkit.getPluginManager().callEvent(new PlayerJoinChatChannelEvent(player, this));
 		}
 
-		// Set the channel specific format
-		String format = ChatSettings.getChannelFormat(player, channelType);
+		// Check if the channel name is either "GLOBAL" or "GENERAL".
+		if (this.getName().equalsIgnoreCase("GLOBAL") || this.getName().equalsIgnoreCase("GENERAL") || this.getName().equalsIgnoreCase("TRADE")) {
+			// Cancel the event to prevent the default chat handling.
+			event.setCancelled(true);
 
-		// Get the list of message recipients.
-		Set<Player> recipients = getRecipients(player, town, nation, channelType, event.getRecipients());
+			// Gather town and nation information
+			String townName = town != null ? town.getName() : "No Town";
+			String townMayor = town != null ? town.getMayor().getName() : "No Mayor";
+			int townBlocks = town != null ? town.getNumTownBlocks() : 0;
+			int townMaxBlocks = town != null ? town.getMaxTownBlocks() : 0;
+			int numOfResidents = town != null ? town.getNumResidents() : 0;
 
-		// Try sending an alone message if it is called for.
-		trySendingAloneMessage(player, recipients);
+			String nationName = nation != null ? nation.getName() : "No Nation";
+			String nationKing = nation != null ? nation.getKing().getName() : "No King";
+			int numOfTowns = nation != null ? nation.getNumTowns() : 0;
+			int numOfNationResidents = nation != null ? nation.getNumResidents() : 0;
 
-		// format is left to store the original non-PAPI-parsed chat format.
-		String newFormat = format;
-		// Parse any PAPI placeholders.
-		if (Chat.usingPlaceholderAPI)
-			newFormat = PlaceholderAPI.setPlaceholders(player, format);
+			// Create hover text for the nation component
+			Component nationHoverText = Component.text()
+					.append(Component.text(".oOo.______[ " + nationName + " ].______.oOo", NamedTextColor.DARK_GREEN))
+					.append(Component.newline())
+					.append(Component.text("King: ", NamedTextColor.DARK_GREEN))
+					.append(Component.text(nationKing, NamedTextColor.GREEN))
+					.append(Component.newline())
+					.append(Component.text("Number of Towns: ", NamedTextColor.DARK_GREEN))
+					.append(Component.text(numOfTowns, NamedTextColor.GREEN))
+					.append(Component.newline())
+					.append(Component.text("Number of Residents: ", NamedTextColor.DARK_GREEN))
+					.append(Component.text(numOfNationResidents, NamedTextColor.GREEN))
+					.build();
 
-		/*
-		 * Only modify GLOBAL channelType chat (general and local chat channels) if isModifyChat() is true.
-		 */
-		if (!(channelType.equals(channelTypes.GLOBAL) && !ChatSettings.isModify_chat()))
-			applyFormats(event, format, newFormat, resident);
+			// Create hover text for the town component
+			Component townHoverText = Component.text()
+					.append(Component.text(".oOo.______[ " + townName + " ].______.oOo", NamedTextColor.DARK_GREEN))
+					.append(Component.newline())
+					.append(Component.text("Mayor: ", NamedTextColor.DARK_GREEN))
+					.append(Component.text(townMayor, NamedTextColor.GREEN))
+					.append(Component.newline())
+					.append(Component.text("Town Size: ", NamedTextColor.DARK_GREEN))
+					.append(Component.text(townBlocks + " / " + townMaxBlocks, NamedTextColor.GREEN))
+					.append(Component.newline())
+					.append(Component.text("Number of Residents: ", NamedTextColor.DARK_GREEN))
+					.append(Component.text(numOfResidents, NamedTextColor.GREEN))
+					.build();
 
-		/*
-		 *  Set recipients for Bukkit to send this message to.
-		 */
-		try {
-			event.getRecipients().clear();
-			event.getRecipients().addAll(recipients);
-
-			// The below exception is thrown on the the rare occurence that an immutable Set
-			// is passed to us in the AsyncPlayerChatEvent.
-		} catch (UnsupportedOperationException ignored) {}
-
-		// If the server has marked this Channel as hooked, fire the AsyncChatHookEvent.
-		// If the event is cancelled, cancel the chat entirely.
-		// Fires its own sendSpyMessage().
-		if (isHooked())
-			if (!sendOffHookedMessage(event, channelType)) {
-				event.setCancelled(true);
-				return;
+			// Create clickable nation component if in a nation
+			Component nationComponent = null;
+			if (nation != null) {
+				nationComponent = Component.text()
+						.content(nationName)
+						.color(NamedTextColor.GOLD)
+						.hoverEvent(HoverEvent.showText(nationHoverText))
+						.clickEvent(ClickEvent.runCommand("/n " + nation.getName()))
+						.build();
 			}
 
-		// Send spy message if this was never hooked.
-		if (!isHooked())
-			sendSpyMessage(event, channelType);
+			// Create clickable town component if in a town
+			Component townComponent = null;
+			if (town != null) {
+				townComponent = Component.text()
+						.content(townName)
+						.color(NamedTextColor.DARK_AQUA)
+						.hoverEvent(HoverEvent.showText(townHoverText))
+						.clickEvent(ClickEvent.runCommand("/t " + town.getName()))
+						.build();
+			}
 
-		// Play the channel sound, if used.
-		tryPlayChannelSound(event.getRecipients());
+			// Determine player name color based on permissions
+			NamedTextColor playerColor = NamedTextColor.GRAY;  // Default color
+			if (player.hasPermission("group.premium")) {
+				playerColor = NamedTextColor.LIGHT_PURPLE;
+			}
+			if (player.hasPermission("group.helper")) {
+				playerColor = NamedTextColor.YELLOW;
+			}
+			if (player.hasPermission("group.mod")) {
+				playerColor = NamedTextColor.GREEN;  // Light green
+			}
+			if (player.hasPermission("group.admin")) {
+				playerColor = NamedTextColor.RED;
+			}
+			if (player.hasPermission("group.developer")) {
+				playerColor = NamedTextColor.DARK_BLUE;
+			}
+			if (player.hasPermission("group.owner")) {
+				playerColor = NamedTextColor.DARK_AQUA;
+			}
 
-		if (notifyjoin)
+			Component playerComponent;
+
+			// Check if the player is the mayor of their town
+			if (town != null && town.getMayor().getName().equals(player.getName())) {
+				// Mayor, prepend the ♔ icon
+				playerComponent = Component.text()
+						.content("♔ " + player.getName())
+						.color(playerColor)
+						.hoverEvent(HoverEvent.showText(Component.text("Click to send a message.")))
+						.clickEvent(ClickEvent.suggestCommand("/msg " + player.getName() + " "))
+						.build();
+			} else {
+				// Not a mayor, display the name without the icon
+				playerComponent = Component.text()
+						.content(player.getName())
+						.color(playerColor)
+						.hoverEvent(HoverEvent.showText(Component.text("Click to send a message.")))
+						.clickEvent(ClickEvent.suggestCommand("/msg " + player.getName() + " "))
+						.build();
+			}
+
+			// Build the final message component dynamically based on presence of nation and town
+			TextComponent.Builder messageComponentBuilder = Component.text().color(NamedTextColor.GRAY);
+
+			// Add [Trade] at the front if the channel is "Trade"
+			if (this.getName().equalsIgnoreCase("TRADE")) {
+				messageComponentBuilder = messageComponentBuilder
+						.append(Component.text("[", NamedTextColor.DARK_AQUA))  // Opening bracket in dark aqua
+						.append(Component.text("Trade", NamedTextColor.GREEN))  // Trade in green
+						.append(Component.text("] ", NamedTextColor.DARK_AQUA));  // Closing bracket in dark aqua
+			}
+
+			if (nationComponent != null && townComponent != null) {
+				messageComponentBuilder = messageComponentBuilder
+						.append(Component.text("[")) // Opening bracket
+						.append(nationComponent) // Nation component
+						.append(Component.text("|", NamedTextColor.GRAY)) // Separator
+						.append(townComponent) // Town component
+						.append(Component.text("] "));
+			} else if (townComponent != null) {
+				messageComponentBuilder = messageComponentBuilder
+						.append(Component.text("[")) // Opening bracket
+						.append(townComponent) // Town component
+						.append(Component.text("] "));
+			}
+
+			if (this.getName().equalsIgnoreCase("TRADE")) {
+				messageComponentBuilder = messageComponentBuilder
+						.append(playerComponent) // Player component
+						.append(Component.text(" • ", NamedTextColor.GRAY)) // Separator
+						.append(Component.text(event.getMessage()).color(NamedTextColor.DARK_AQUA)); // Message content
+			} else {
+				messageComponentBuilder = messageComponentBuilder
+						.append(playerComponent) // Player component
+						.append(Component.text(" • ", NamedTextColor.GRAY)) // Separator
+						.append(Component.text(event.getMessage()).color(NamedTextColor.WHITE)); // Message content
+			}
+
+			// Build the final component from the builder
+			Component messageComponent = messageComponentBuilder.build();
+
+			String logMessage = String.format("[%s|%s] %s • %s",
+					nation != null ? nation.getName() : "No Nation",
+					town != null ? town.getName() : "No Town",
+					player.getName(),
+					event.getMessage());
+
+			Bukkit.getLogger().info(logMessage);
+
+			// Send the message to the player and all recipients
+			for (Player recipient : event.getRecipients()) {
+				recipient.sendMessage(messageComponent);
+			}
+
+		} else {
+			// If the channel is not "GLOBAL" or "GENERAL", proceed with the default chat processing.
+			String format = ChatSettings.getChannelFormat(player, channelType);
+
+			// Get the list of message recipients.
+			Set<Player> recipients = getRecipients(player, town, nation, channelType, event.getRecipients());
+
+			// Parse any PAPI placeholders.
+			String newFormat = format;
+			if (Chat.usingPlaceholderAPI) {
+				newFormat = PlaceholderAPI.setPlaceholders(player, format);
+			}
+
+			// Only modify GLOBAL channelType chat (general and local chat channels) if isModifyChat() is true.
+			if (!(channelType.equals(channelTypes.GLOBAL) && !ChatSettings.isModify_chat())) {
+				applyFormats(event, format, newFormat, resident);
+			}
+
+			// Set recipients for Bukkit to send this message to.
+			try {
+				event.getRecipients().clear();
+				event.getRecipients().addAll(recipients);
+			} catch (UnsupportedOperationException ignored) {}
+
+			// If the server has marked this Channel as hooked, fire the AsyncChatHookEvent.
+			if (isHooked()) {
+				if (!sendOffHookedMessage(event, channelType)) {
+					event.setCancelled(true);
+					return;
+				}
+			}
+
+			// Send spy message if this was never hooked.
+			if (!isHooked()) {
+				sendSpyMessage(event, channelType);
+			}
+
+			// Play the channel sound, if used.
+			tryPlayChannelSound(event.getRecipients());
+		}
+
+		if (notifyjoin) {
 			TownyMessaging.sendMessage(player, "You join " + Colors.translateColorCodes(getMessageColour()) + getName());
+		}
 
-		/*
-		 * Perform any last channel specific functions like logging this chat and
-		 * relaying to Dynmap.
-		 */
+		// Perform any last channel-specific functions like logging this chat and relaying to Dynmap.
 		switch (channelType) {
-		case TOWN:
-		case NATION:
-		case ALLIANCE:
-		case DEFAULT:
-			break;
-		case PRIVATE:
-		case GLOBAL:
-			tryPostToDynmap(player, event.getMessage());
-			break;
+			case TOWN:
+			case NATION:
+			case ALLIANCE:
+			case DEFAULT:
+				break;
+			case PRIVATE:
+			case GLOBAL:
+				tryPostToDynmap(player, event.getMessage());
+				break;
 		}
 	}
+
 
 	private Set<Player> getRecipients(Player player, Town town, Nation nation, channelTypes channelType, Set<Player> recipients) {
 		return switch (channelType) {
